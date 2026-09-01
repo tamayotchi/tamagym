@@ -1,0 +1,48 @@
+# Kamal deployment for Tamagym.
+service: tamagym
+image: tamayotchi/tamagym
+
+# Reuse the server used by Prezio and tamayotchi.com.
+servers:
+  web:
+    - home-server
+
+# kamal-proxy terminates TLS and routes this hostname to Phoenix.
+proxy:
+  ssl: true
+  host: tamagym.tamayotchi.com
+  app_port: 4000
+  healthcheck:
+    interval: 3
+    path: /api/health
+    timeout: 180
+
+registry:
+  username: tamayotchi
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+
+env:
+  clear:
+    PHX_HOST: tamagym.tamayotchi.com
+    PORT: 4000
+    COOKIE_SECURE: true
+    DATABASE_PATH: /tamagym/storage/tamagym.db
+    MEDIA_DIR: /tamagym/storage/media
+    AI_MODEL: google:gemini-3.5-flash-lite
+  secret:
+    - SECRET_KEY_BASE
+    - GOOGLE_API_KEY
+
+# Keep both user data and the downloaded exercise media across releases.
+volumes:
+  - "tamagym_storage:/tamagym/storage"
+
+aliases:
+  console: app exec --interactive --reuse "/app/bin/tamagym remote"
+  shell: app exec --interactive --reuse "/bin/sh"
+  logs: app logs -f
+  migrate: app exec --reuse "/app/bin/migrate"

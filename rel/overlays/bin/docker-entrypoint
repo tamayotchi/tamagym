@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -eq 1 ] && [ "$1" = "/app/bin/server" ]; then
+  echo "Running database migrations..."
+  /app/bin/migrate
+
+  # Media is downloaded into the persistent volume. Do not hold up the health
+  # check on the first deployment while the catalogue downloads.
+  /app/bin/fetch-media &
+fi
+
+exec "$@"
