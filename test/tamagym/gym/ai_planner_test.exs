@@ -71,6 +71,28 @@ defmodule Tamagym.Gym.AIPlannerTest do
            end)
   end
 
+  test "suggests catalogue-backed exercises that are not already in the active workout" do
+    state =
+      State.defaults()
+      |> Map.put("active", %{
+        "id" => "active",
+        "name" => "Back + Biceps",
+        "entries" => [
+          %{
+            "id" => "0007",
+            "target" => %{"sets" => 3, "reps" => 10},
+            "sets" => [%{"w" => 20, "r" => 10, "done" => false}]
+          }
+        ]
+      })
+
+    assert {:ok, suggestions} = AIPlanner.suggestions(state, "test:planner-a")
+
+    assert length(suggestions) == 3
+    assert Enum.all?(suggestions, &is_binary(&1["reason"]))
+    refute Enum.any?(suggestions, &(&1["exercise_id"] == "0007"))
+  end
+
   test "returns catalogue-backed alternatives for the active exercise" do
     state =
       State.defaults()

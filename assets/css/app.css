@@ -603,14 +603,16 @@ h4.sec{
 .exmedia{position:relative;border-radius:var(--r-lg);overflow:hidden;background:#fff;margin-bottom:12px}
 .exmedia img{width:100%;height:320px;object-fit:contain;display:block}
 .exmedia .gifhint,.exmedia .giftoggle{
-  position:absolute;bottom:9px;display:inline-flex;align-items:center;gap:4px;
+  position:absolute;top:auto;bottom:9px;width:auto;height:26px;min-height:26px;max-height:26px;
+  max-width:calc(100% - 18px);display:inline-flex;align-items:center;gap:4px;overflow:hidden;
   background:rgba(0,0,0,.45);color:#fff;border-radius:99px;padding:5px 11px;
-  font-size:12px;font-weight:500;
+  font-size:12px;font-weight:500;line-height:1;white-space:nowrap;
   -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
 }
-.exmedia .gifhint{right:9px}
-.exmedia .giftoggle{left:9px}
+.exmedia .gifhint{right:9px;left:auto}
+.exmedia .giftoggle{left:9px;right:auto}
 .exmedia .gifhint .icn,.exmedia .giftoggle .icn{font-size:13px}
+.exmedia .gifhint>span,.exmedia .giftoggle>span{overflow:hidden;text-overflow:ellipsis}
 /* superset: both exercises are on screen together, so the animations have to give way —
    at 180px you had to scroll a full screen between two exercises done back-to-back */
 .exmedia.compact img{height:120px}
@@ -655,8 +657,7 @@ h4.sec{
 .setrow.eff3 .stp .val{padding:0}
 .setrow.done .n{background:var(--acc);color:var(--on-acc)}
 .setrow.done{opacity:.45}
-/* drop-set drops / rest-pause bursts riding on a work row, editable like the row itself
-   (issue: drop-sets & rest-pause) */
+/* Drop-set reductions ride below their work row and remain editable like the main set. */
 .subrow{display:flex;align-items:center;gap:6px;padding:3px 0 3px 32px}
 .subrow .subn{font-size:11px;color:var(--label-3);flex:none;width:46px}
 .subrow .stp.mini{flex:1;min-width:0}
@@ -1134,6 +1135,10 @@ h4.sec{
 .workout-header>div{flex:1}
 .exercise-title{font-size:20px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
 .workout-sets{margin-top:10px}
+.workout-warmup-action{display:flex;justify-content:flex-start;margin-bottom:12px}
+.workout-warmup-action .warmup-add{
+  background:color-mix(in srgb,var(--orange) 15%,transparent);color:var(--orange)
+}
 .sethead.live{display:grid;grid-template-columns:24px minmax(0,1.4fr) minmax(0,1fr) 30px;gap:8px;text-align:center}
 .sethead.live.bodyweight{grid-template-columns:24px minmax(0,1fr) 30px}
 .sethead.live .n-sp,.sethead.live .ck-sp{width:auto}
@@ -1152,6 +1157,7 @@ h4.sec{
 .workout-exercise-actions .remove-exercise{color:var(--red)}
 .workout-finish{margin-top:8px}
 .workout-exercise-picker{max-height:min(62vh,560px);overflow:auto}
+.exercise-picker-ai{margin-bottom:10px}
 .exmedia .media-expand{display:none}
 .exmedia.compact .media-collapse{display:none}
 .exmedia.compact .media-expand{display:block}
@@ -1220,8 +1226,7 @@ html[data-local-guest="true"] .lv-login{visibility:hidden}
 .set-block .setsep{margin-top:0}
 .setrow.warmup .n{background:color-mix(in srgb,var(--orange) 18%,var(--surface-2));color:var(--orange)}
 .setextra .warm-remove{display:inline-flex;align-items:center;gap:4px;color:var(--red)}
-.burst-row .burst-value{font-size:14px;font-weight:600;min-height:30px}
-.burst-rest{padding:6px 8px;border-radius:7px;background:color-mix(in srgb,var(--acc) 14%,transparent);color:var(--acc);font-size:12px;font-weight:600;flex:none}
+.subrow-value{font-size:14px;font-weight:600;min-height:30px}
 .body-weight-actions{gap:8px}
 .home-goal,.home-log{color:var(--acc)!important}
 .home-goal.active{color:var(--yellow)!important}

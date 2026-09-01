@@ -6,7 +6,6 @@ defmodule Tamagym.Gym.State do
   @defaults %{
     "unit" => "kg",
     "restSec" => 90,
-    "restPauseSec" => 15,
     "lang" => "en",
     "theme" => "dark",
     "accent" => "lime",
@@ -26,7 +25,13 @@ defmodule Tamagym.Gym.State do
   }
 
   def defaults, do: @defaults
-  def clean(value) when is_map(value), do: Map.merge(@defaults, value)
+
+  def clean(value) when is_map(value) do
+    @defaults
+    |> Map.merge(Map.delete(value, "restPauseSec"))
+    |> strip_rest_pause_data()
+  end
+
   def clean(_value), do: @defaults
 
   def locale(state), do: if(state["lang"] == "es", do: "es", else: "en")
@@ -371,9 +376,21 @@ defmodule Tamagym.Gym.State do
 
   def update_set(state, entry_index, set_index, attrs) do
     update_active_entry(state, entry_index, fn entry ->
-      update_in(entry["sets"], fn sets ->
-        List.update_at(sets, set_index, &Map.merge(&1, attrs))
-      end)
+      sets = entry["sets"]
+      first_work_index = Enum.find_index(sets, &(not warmup_set?(&1)))
+
+      updated_sets =
+        sets
+        |> Enum.with_index()
+        |> Enum.map(fn {set, index} ->
+          copy_to_following_set? =
+            set_index == first_work_index && index > set_index && not warmup_set?(set) &&
+              not set["done"]
+
+          if index == set_index || copy_to_following_set?, do: Map.merge(set, attrs), else: set
+        end)
+
+      Map.put(entry, "sets", updated_sets)
     end)
   end
 
@@ -407,7 +424,7 @@ defmodule Tamagym.Gym.State do
     update_active_entry(state, entry_index, fn entry ->
       sets =
         List.update_at(entry["sets"], set_index, fn set ->
-          if warmup_set?(set) || List.wrap(set["clusters"]) != [] do
+          if warmup_set?(set) do
             set
           else
             drops = List.wrap(set["drops"])
@@ -470,78 +487,6 @@ defmodule Tamagym.Gym.State do
     end)
   end
 
-  def add_burst(state, entry_index, set_index, rest_seconds) do
-    update_active_entry(state, entry_index, fn entry ->
-      sets =
-        List.update_at(entry["sets"], set_index, fn set ->
-          if warmup_set?(set) || List.wrap(set["drops"]) != [] do
-            set
-          else
-            clusters = List.wrap(set["clusters"])
-            base_reps = (List.last(clusters) || set)["r"]
-            burst_reps = max(1, round(number(base_reps) / 2))
-            cluster = %{"r" => burst_reps, "restSec" => max(5, rest_seconds)}
-
-            set
-            |> Map.put("type", "restpause")
-            |> Map.put("clusters", clusters ++ [cluster])
-            |> Map.update("r", burst_reps, &(integer(&1, 0) + burst_reps))
-          end
-        end)
-
-      Map.put(entry, "sets", sets)
-    end)
-  end
-
-  def step_burst(state, entry_index, set_index, burst_index, direction) do
-    update_active_entry(state, entry_index, fn entry ->
-      sets =
-        List.update_at(entry["sets"], set_index, fn set ->
-          clusters = List.wrap(set["clusters"])
-
-          case Enum.at(clusters, burst_index) do
-            nil ->
-              set
-
-            cluster ->
-              previous = max(1, integer(cluster["r"], 1))
-              current = max(1, previous + direction)
-              clusters = List.replace_at(clusters, burst_index, Map.put(cluster, "r", current))
-
-              set
-              |> Map.put("clusters", clusters)
-              |> Map.update("r", current, &max(0, integer(&1, 0) + current - previous))
-          end
-        end)
-
-      Map.put(entry, "sets", sets)
-    end)
-  end
-
-  def remove_burst(state, entry_index, set_index, burst_index) do
-    update_active_entry(state, entry_index, fn entry ->
-      sets =
-        List.update_at(entry["sets"], set_index, fn set ->
-          clusters = List.wrap(set["clusters"])
-          removed = Enum.at(clusters, burst_index)
-          clusters = List.delete_at(clusters, burst_index)
-
-          set =
-            if removed,
-              do: Map.update(set, "r", 0, &max(0, integer(&1, 0) - integer(removed["r"], 0))),
-              else: set
-
-          if clusters == [] do
-            set |> Map.delete("clusters") |> Map.delete("type")
-          else
-            Map.put(set, "clusters", clusters)
-          end
-        end)
-
-      Map.put(entry, "sets", sets)
-    end)
-  end
-
   def warmup_set?(set) when is_map(set),
     do: set["phase"] == "warmup" || set["warmup"] == true
 
@@ -596,7 +541,7 @@ defmodule Tamagym.Gym.State do
   end
 
   def update_preference(state, key, value)
-      when key in ~w(unit restSec restPauseSec lang theme accent) do
+      when key in ~w(unit restSec lang theme accent) do
     Map.put(state, key, value)
   end
 
@@ -638,7 +583,7 @@ defmodule Tamagym.Gym.State do
   def number(value) when is_float(value), do: value
 
   def number(value) when is_binary(value) do
-    case Float.parse(value) do
+    case value |> String.replace(",", ".") |> Float.parse() do
       {number, _} -> number
       :error -> 0.0
     end
@@ -685,14 +630,6 @@ defmodule Tamagym.Gym.State do
     }
   end
 
-  defp normalize_ai_technique(%{"type" => "restpause"} = technique) do
-    %{
-      "type" => "restpause",
-      "totalReps" => technique["totalReps"] |> integer(5) |> max(1) |> min(20),
-      "restSec" => technique["restSec"] |> integer(15) |> max(10) |> min(30)
-    }
-  end
-
   defp normalize_ai_technique(_technique), do: nil
 
   defp entry_from_config(config) do
@@ -735,56 +672,76 @@ defmodule Tamagym.Gym.State do
     end)
   end
 
-  defp apply_planned_intensifier(sets, %{"intensifier" => %{"type" => "restpause"} = plan}) do
-    base = List.first(sets) || %{"w" => 0.0, "r" => 10, "done" => false}
-    extra_reps = max(1, integer(plan["totalReps"], base["r"]))
-    rest_seconds = max(5, integer(plan["restSec"], 15))
-
-    clusters =
-      extra_reps
-      |> split_burst_reps([])
-      |> Enum.map(&%{"r" => &1, "restSec" => rest_seconds})
-
-    warmup = Map.put(base, "phase", "warmup")
-
-    work =
-      base
-      |> Map.put("phase", "work")
-      |> Map.put("type", "restpause")
-      |> Map.put("r", integer(base["r"], 0) + extra_reps)
-      |> Map.put("clusters", clusters)
-
-    [warmup, work]
-  end
-
   defp apply_planned_intensifier(sets, _config), do: sets
 
   defp apply_planned_set_technique(set, %{"type" => "dropset"} = plan) do
     apply_planned_intensifier([set], %{"intensifier" => plan}) |> List.first()
   end
 
-  defp apply_planned_set_technique(set, %{"type" => "restpause"} = plan) do
-    extra_reps = max(1, integer(plan["totalReps"], set["r"]))
-    rest_seconds = max(5, integer(plan["restSec"], 15))
-
-    clusters =
-      extra_reps
-      |> split_burst_reps([])
-      |> Enum.map(&%{"r" => &1, "restSec" => rest_seconds})
-
-    set
-    |> Map.put("type", "restpause")
-    |> Map.put("r", integer(set["r"], 0) + extra_reps)
-    |> Map.put("clusters", clusters)
-  end
-
   defp apply_planned_set_technique(set, _technique), do: set
 
-  defp split_burst_reps(0, bursts), do: Enum.reverse(bursts)
+  defp strip_rest_pause_data(state) do
+    state
+    |> Map.update!("routines", fn routines ->
+      Enum.map(routines, fn routine ->
+        Map.update(routine, "ex", [], fn configs ->
+          Enum.map(configs, &strip_rest_pause_config/1)
+        end)
+      end)
+    end)
+    |> Map.update!("workouts", fn workouts ->
+      Enum.map(workouts, &strip_rest_pause_workout/1)
+    end)
+    |> Map.update!("active", fn
+      nil -> nil
+      workout -> strip_rest_pause_workout(workout)
+    end)
+  end
 
-  defp split_burst_reps(remaining, bursts) do
-    burst = min(remaining, max(1, round(remaining / 2)))
-    split_burst_reps(remaining - burst, [burst | bursts])
+  defp strip_rest_pause_workout(workout) do
+    Map.update(workout, "entries", [], fn entries ->
+      Enum.map(entries, fn entry ->
+        entry =
+          case entry["target"] do
+            target when is_map(target) ->
+              Map.put(entry, "target", strip_rest_pause_config(target))
+
+            _target ->
+              entry
+          end
+
+        Map.update(entry, "sets", [], fn sets -> Enum.map(sets, &strip_rest_pause_set/1) end)
+      end)
+    end)
+  end
+
+  defp strip_rest_pause_config(config) do
+    config =
+      case config["setTechniques"] do
+        techniques when is_list(techniques) ->
+          Map.put(
+            config,
+            "setTechniques",
+            Enum.map(techniques, fn
+              %{"type" => "dropset"} = technique -> technique
+              _technique -> nil
+            end)
+          )
+
+        _techniques ->
+          config
+      end
+
+    case config["intensifier"] do
+      %{"type" => "dropset"} -> config
+      nil -> config
+      _removed_technique -> Map.delete(config, "intensifier")
+    end
+  end
+
+  defp strip_rest_pause_set(set) do
+    set = Map.delete(set, "clusters")
+    if set["type"] == "restpause", do: Map.delete(set, "type"), else: set
   end
 
   defp update_routine_exercises(state, routine_id, callback) do

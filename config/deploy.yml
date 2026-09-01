@@ -9,8 +9,8 @@ servers:
 
 # kamal-proxy terminates TLS and routes this hostname to Phoenix.
 proxy:
-  ssl: true
-  host: tamagym.tamayotchi.com
+  ssl: false
+  host: gym.tamayotchi.com
   app_port: 4000
   healthcheck:
     interval: 3
@@ -27,7 +27,7 @@ builder:
 
 env:
   clear:
-    PHX_HOST: tamagym.tamayotchi.com
+    PHX_HOST: gym.tamayotchi.com
     PORT: 4000
     COOKIE_SECURE: true
     DATABASE_PATH: /tamagym/storage/tamagym.db

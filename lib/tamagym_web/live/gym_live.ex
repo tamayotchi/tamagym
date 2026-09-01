@@ -127,27 +127,18 @@ defmodule TamagymWeb.GymLive do
     "Warm-up" => "Calentamiento",
     "Add warm-up set" => "Añadir serie de calentamiento",
     "Remove warm-up" => "Quitar calentamiento",
-    "Burst" => "Ráfaga",
-    "Remove burst" => "Quitar ráfaga",
     "Drop" => "Bajada",
     "Remove drop" => "Quitar bajada",
-    "Drop-set / rest-pause" => "Series descendentes / rest-pause",
     "None" => "Ninguno",
     "Drop-set" => "Serie descendente",
-    "Rest-pause" => "Rest-pause",
     "Last set" => "Última serie",
     "Drops" => "Bajadas",
     "Weight drop (%)" => "Bajada de peso (%)",
-    "Rest-pause reps" => "Repeticiones rest-pause",
     "Set techniques" => "Técnicas por serie",
-    "Extra reps" => "Repeticiones extra",
     "Choose a technique only for the sets that should use it — for example, make just the last set a drop set." =>
       "Elige una técnica solo para las series que la necesiten; por ejemplo, usa una bajada únicamente en la última serie.",
-    "Rest (s)" => "Descanso (s)",
     "Each work set adds the selected number of drops with no rest, reducing the weight each time." =>
       "Cada serie añade las bajadas seleccionadas sin descanso, reduciendo el peso cada vez.",
-    "The session starts with a warm-up, then splits the extra reps into short-rest bursts." =>
-      "La sesión empieza con calentamiento y divide las repeticiones extra en ráfagas con descansos cortos.",
     "Decrease weight" => "Reducir peso",
     "Increase weight" => "Aumentar peso",
     "Decrease reps" => "Reducir repeticiones",
@@ -187,8 +178,6 @@ defmodule TamagymWeb.GymLive do
     "Body weight" => "Peso corporal",
     "Add body weight" => "Añadir peso corporal",
     "Log body weight" => "Registrar peso corporal",
-    "Save & start workout" => "Guardar y empezar entreno",
-    "Start without weighing in" => "Empezar sin pesarme",
     "Recent weigh-ins" => "Pesajes recientes",
     "No entries yet." => "Todavía no hay registros.",
     "Exercise library" => "Biblioteca de ejercicios",
@@ -229,7 +218,6 @@ defmodule TamagymWeb.GymLive do
     "During a workout" => "Durante un entreno",
     "Rest timer" => "Temporizador de descanso",
     "Skip" => "Saltar",
-    "Rest-pause rest" => "Descanso rest-pause",
     "Off" => "Desactivado",
     "Appearance" => "Apariencia",
     "Theme" => "Tema",
@@ -287,6 +275,9 @@ defmodule TamagymWeb.GymLive do
     "Your selected model is saved per account or browser." =>
       "El modelo seleccionado se guarda por cuenta o navegador.",
     "Find alternatives with AI" => "Buscar alternativas con IA",
+    "Suggest with AI" => "Sugerir con IA",
+    "Finding exercise suggestions…" => "Buscando sugerencias de ejercicios…",
+    "Choose a suggested exercise" => "Elige un ejercicio sugerido",
     "Why can't you do this exercise?" => "¿Por qué no puedes hacer este ejercicio?",
     "Equipment unavailable" => "Equipamiento no disponible",
     "Pain or discomfort" => "Dolor o molestia",
@@ -513,7 +504,12 @@ defmodule TamagymWeb.GymLive do
 
       true ->
         routine_id = if id == "freestyle", do: nil, else: id
-        {:noreply, assign(socket, :modal, {:bodyweight_start, routine_id})}
+
+        {:noreply,
+         socket
+         |> assign(:modal, nil)
+         |> persist(State.start_workout(socket.assigns.state, routine_id))
+         |> push_patch(to: ~p"/workout")}
     end
   end
 
@@ -522,34 +518,9 @@ defmodule TamagymWeb.GymLive do
 
     if value > 0 do
       state = State.add_body_weight(socket.assigns.state, value)
-
-      case socket.assigns.modal do
-        {:bodyweight_start, routine_id} ->
-          {:noreply,
-           socket
-           |> assign(:modal, nil)
-           |> persist(State.start_workout(state, routine_id, value))
-           |> push_patch(to: ~p"/workout")}
-
-        _modal ->
-          {:noreply, socket |> assign(:modal, nil) |> persist(state)}
-      end
+      {:noreply, socket |> assign(:modal, nil) |> persist(state)}
     else
       {:noreply, put_flash(socket, :error, "Enter a valid weight.")}
-    end
-  end
-
-  def handle_event("workout:start-without-weight", _params, socket) do
-    case socket.assigns.modal do
-      {:bodyweight_start, routine_id} ->
-        {:noreply,
-         socket
-         |> assign(:modal, nil)
-         |> persist(State.start_workout(socket.assigns.state, routine_id))
-         |> push_patch(to: ~p"/workout")}
-
-      _modal ->
-        {:noreply, socket}
     end
   end
 
@@ -828,7 +799,7 @@ defmodule TamagymWeb.GymLive do
         %{"index" => index, "set" => set_index, "type" => type},
         socket
       )
-      when type in ~w(none dropset restpause) do
+      when type in ~w(none dropset) do
     index = State.integer(index)
     set_index = State.integer(set_index)
     config = routine_config(socket.assigns.state, socket.assigns.routine_id, index)
@@ -839,13 +810,6 @@ defmodule TamagymWeb.GymLive do
           case type do
             "dropset" ->
               %{"type" => "dropset", "count" => 1, "pct" => 20}
-
-            "restpause" ->
-              %{
-                "type" => "restpause",
-                "totalReps" => max(1, State.integer(config["reps"], 10)),
-                "restSec" => max(5, State.integer(socket.assigns.state["restPauseSec"], 15))
-              }
 
             "none" ->
               nil
@@ -876,7 +840,7 @@ defmodule TamagymWeb.GymLive do
         },
         socket
       )
-      when field in ~w(count pct totalReps restSec) do
+      when field in ~w(count pct) do
     index = State.integer(index)
     set_index = State.integer(set_index)
     config = routine_config(socket.assigns.state, socket.assigns.routine_id, index)
@@ -885,7 +849,7 @@ defmodule TamagymWeb.GymLive do
 
     state =
       if technique do
-        {step, minimum} = if field in ~w(pct restSec), do: {5, 5}, else: {1, 1}
+        {step, minimum} = if field == "pct", do: {5, 5}, else: {1, 1}
         current = State.integer(technique[field], minimum)
         value = max(minimum, current + if(direction == "up", do: step, else: -step))
         value = if field == "pct", do: min(value, 90), else: value
@@ -951,6 +915,39 @@ defmodule TamagymWeb.GymLive do
 
   def handle_event("workout:swap-open", %{"index" => index}, socket) do
     {:noreply, open_workout_exercise_picker(socket, {:swap_exercise, State.integer(index)})}
+  end
+
+  def handle_event("ai:suggestions-generate", _params, socket) do
+    model = AI.selected_model(socket.assigns.state)
+
+    if socket.assigns.state["active"] && model do
+      state = socket.assigns.state
+
+      {:noreply,
+       socket
+       |> assign(
+         modal: :ai_exercise_suggestions,
+         ai_loading: :suggestions,
+         ai_alternatives: [],
+         ai_error: nil
+       )
+       |> start_async(:ai_exercise_suggestions, fn -> AIPlanner.suggestions(state, model) end)}
+    else
+      {:noreply, put_flash(socket, :error, "AI planning is not configured.")}
+    end
+  end
+
+  def handle_event("ai:suggestion-select", %{"id" => exercise_id}, socket) do
+    allowed? = Enum.any?(socket.assigns.ai_alternatives, &(&1["exercise_id"] == exercise_id))
+
+    if allowed? do
+      {:noreply,
+       socket
+       |> assign(modal: nil, ai_alternatives: [], ai_error: nil)
+       |> persist(State.add_active_exercise(socket.assigns.state, exercise_id))}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("ai:alternatives-open", %{"index" => index}, socket) do
@@ -1144,51 +1141,6 @@ defmodule TamagymWeb.GymLive do
     {:noreply, persist(socket, state)}
   end
 
-  def handle_event("burst:add", %{"entry" => entry, "set" => set_index}, socket) do
-    state =
-      State.add_burst(
-        socket.assigns.state,
-        State.integer(entry),
-        State.integer(set_index),
-        State.integer(socket.assigns.state["restPauseSec"], 15)
-      )
-
-    {:noreply, persist(socket, state)}
-  end
-
-  def handle_event(
-        "burst:step",
-        %{"entry" => entry, "set" => set_index, "burst" => burst, "direction" => direction},
-        socket
-      ) do
-    state =
-      State.step_burst(
-        socket.assigns.state,
-        State.integer(entry),
-        State.integer(set_index),
-        State.integer(burst),
-        if(direction == "up", do: 1, else: -1)
-      )
-
-    {:noreply, persist(socket, state)}
-  end
-
-  def handle_event(
-        "burst:remove",
-        %{"entry" => entry, "set" => set_index, "burst" => burst},
-        socket
-      ) do
-    state =
-      State.remove_burst(
-        socket.assigns.state,
-        State.integer(entry),
-        State.integer(set_index),
-        State.integer(burst)
-      )
-
-    {:noreply, persist(socket, state)}
-  end
-
   def handle_event("rest:start", %{"seconds" => seconds}, socket) do
     {:noreply, push_event(socket, "rest:start", %{seconds: max(1, State.integer(seconds, 15))})}
   end
@@ -1258,7 +1210,7 @@ defmodule TamagymWeb.GymLive do
   end
 
   def handle_event("setting:open", %{"key" => key}, socket)
-      when key in ~w(lang restSec restPauseSec) do
+      when key in ~w(lang restSec) do
     {:noreply, assign(socket, :modal, {:setting, key})}
   end
 
@@ -1348,6 +1300,29 @@ defmodule TamagymWeb.GymLive do
      )}
   end
 
+  def handle_async(:ai_exercise_suggestions, {:ok, {:ok, suggestions}}, socket) do
+    {:noreply,
+     assign(socket,
+       modal: :ai_exercise_suggestions,
+       ai_alternatives: suggestions,
+       ai_loading: nil,
+       ai_error: nil
+     )}
+  end
+
+  def handle_async(:ai_exercise_suggestions, result, socket) do
+    Logger.error(
+      "[Tamagym.AI] exercise suggestions task failed result=#{AI.error_summary(result)}"
+    )
+
+    {:noreply,
+     assign(socket,
+       modal: :ai_exercise_suggestions,
+       ai_loading: nil,
+       ai_error: ai_error_message(socket.assigns.locale)
+     )}
+  end
+
   def handle_async({:ai_alternatives, index}, {:ok, {:ok, alternatives}}, socket) do
     {:noreply,
      assign(socket,
@@ -1382,7 +1357,7 @@ defmodule TamagymWeb.GymLive do
           auth_form={@auth_form}
           locale={@locale}
         />
-        <div :if={@current_scope} id="gym-app">
+        <div :if={@current_scope} id="gym-app" phx-hook="NumericInputs">
           <.screen assigns={assigns} />
           <.navigation action={@live_action} locale={@locale} state={@state} />
           <.modal
@@ -1505,7 +1480,6 @@ defmodule TamagymWeb.GymLive do
       locale={@locale}
       search={@search}
       results={@catalogue_results}
-      ai_configured={@ai_models != []}
     />
     <.stats
       :if={@live_action == :stats}
@@ -1888,7 +1862,6 @@ defmodule TamagymWeb.GymLive do
   attr :locale, :string, required: true
   attr :search, :string, required: true
   attr :results, :list, required: true
-  attr :ai_configured, :boolean, required: true
 
   def workout(assigns) do
     active = assigns.state["active"]
@@ -2021,6 +1994,13 @@ defmodule TamagymWeb.GymLive do
           </div>
 
           <div class="card workout-sets">
+            <div class="workout-warmup-action">
+              <button
+                class="btn sm warmup-add"
+                phx-click="set:add-warmup"
+                phx-value-entry={@current_index}
+              ><.icon name="hero-fire" />{t(@locale, "Add warm-up set")}</button>
+            </div>
             <div class={["sethead", "live", @bodyweight_exercise && "bodyweight"]}>
               <span class="n-sp"></span><span :if={!@bodyweight_exercise} class="w-sp">{t(
                 @locale,
@@ -2073,11 +2053,13 @@ defmodule TamagymWeb.GymLive do
                   <span class="val"><.input
                     class="num"
                     name="w"
-                    type="number"
+                    type="text"
                     value={set["w"] || 0}
                     min="0"
                     step="0.5"
                     inputmode="decimal"
+                    data-numeric-input="decimal"
+                    autocomplete="off"
                   /></span>
                   <button
                     type="button"
@@ -2102,11 +2084,13 @@ defmodule TamagymWeb.GymLive do
                   <span class="val"><.input
                     class="num"
                     name="r"
-                    type="number"
+                    type="text"
                     value={set["r"] || 0}
                     min="0"
                     step="1"
                     inputmode="numeric"
+                    data-numeric-input="integer"
+                    autocomplete="off"
                   /></span>
                   <button
                     type="button"
@@ -2143,7 +2127,7 @@ defmodule TamagymWeb.GymLive do
                     phx-value-drop={drop_index}
                     phx-value-field="w"
                     phx-value-direction="down"
-                  ><.icon name="hero-minus" /></button><span class="val burst-value">{format_number(
+                  ><.icon name="hero-minus" /></button><span class="val subrow-value">{format_number(
                     drop["w"]
                   )}</span><button
                     type="button"
@@ -2166,7 +2150,7 @@ defmodule TamagymWeb.GymLive do
                     phx-value-drop={drop_index}
                     phx-value-field="r"
                     phx-value-direction="down"
-                  ><.icon name="hero-minus" /></button><span class="val burst-value">{drop["r"]}</span><button
+                  ><.icon name="hero-minus" /></button><span class="val subrow-value">{drop["r"]}</span><button
                     type="button"
                     aria-label={t(@locale, "Increase reps")}
                     phx-click="drop:step"
@@ -2188,47 +2172,6 @@ defmodule TamagymWeb.GymLive do
                 ><.icon name="hero-x-mark" /></button>
               </div>
 
-              <div
-                :for={{burst, burst_index} <- Enum.with_index(List.wrap(set["clusters"]))}
-                class="subrow burst-row"
-              >
-                <span class="subn">{t(@locale, "Burst")} {burst_index + 1}</span>
-                <div class="stp mini">
-                  <button
-                    type="button"
-                    aria-label={t(@locale, "Decrease reps")}
-                    phx-click="burst:step"
-                    phx-value-entry={@current_index}
-                    phx-value-set={set_index}
-                    phx-value-burst={burst_index}
-                    phx-value-direction="down"
-                  ><.icon name="hero-minus" /></button><span class="val burst-value">{burst["r"]}</span><button
-                    type="button"
-                    aria-label={t(@locale, "Increase reps")}
-                    phx-click="burst:step"
-                    phx-value-entry={@current_index}
-                    phx-value-set={set_index}
-                    phx-value-burst={burst_index}
-                    phx-value-direction="up"
-                  ><.icon name="hero-plus" /></button>
-                </div>
-                <button
-                  type="button"
-                  class="burst-rest"
-                  phx-click="rest:start"
-                  phx-value-seconds={burst["restSec"]}
-                >{burst["restSec"]}s</button>
-                <button
-                  type="button"
-                  class="iconbtn"
-                  aria-label={t(@locale, "Remove burst")}
-                  phx-click="burst:remove"
-                  phx-value-entry={@current_index}
-                  phx-value-set={set_index}
-                  phx-value-burst={burst_index}
-                ><.icon name="hero-x-mark" /></button>
-              </div>
-
               <div :if={State.warmup_set?(set)} class="setextra">
                 <button
                   type="button"
@@ -2240,28 +2183,16 @@ defmodule TamagymWeb.GymLive do
               </div>
               <div :if={!State.warmup_set?(set)} class="setextra">
                 <button
-                  :if={!@bodyweight_exercise && List.wrap(set["clusters"]) == []}
+                  :if={!@bodyweight_exercise}
                   type="button"
                   class="chip add"
                   phx-click="drop:add"
                   phx-value-entry={@current_index}
                   phx-value-set={set_index}
                 ><.icon name="hero-arrow-down" />+ {t(@locale, "Drop")}</button>
-                <button
-                  :if={List.wrap(set["drops"]) == []}
-                  type="button"
-                  class="chip add"
-                  phx-click="burst:add"
-                  phx-value-entry={@current_index}
-                  phx-value-set={set_index}
-                ><.icon name="hero-bolt" />+ {t(@locale, "Burst")}</button>
               </div>
             </div>
             <div class="row set-actions">
-              <button class="btn sm" phx-click="set:add-warmup" phx-value-entry={@current_index}><.icon name="hero-fire" />{t(
-                @locale,
-                "Add warm-up set"
-              )}</button>
               <button
                 class="btn sm"
                 phx-click="set:remove"
@@ -2322,12 +2253,6 @@ defmodule TamagymWeb.GymLive do
             @locale,
             "Swap exercise"
           )}</button>
-          <button
-            :if={@ai_configured}
-            class="btn sm tinted"
-            phx-click="ai:alternatives-open"
-            phx-value-index={@current_index}
-          ><.icon name="hero-sparkles" />{t(@locale, "Find alternatives with AI")}</button>
           <button
             class="btn sm remove-exercise"
             phx-click="workout:remove-open"
@@ -2877,15 +2802,6 @@ defmodule TamagymWeb.GymLive do
               class="lrow-c"
             />
           </button>
-          <button class="lrow tap" phx-click="setting:open" phx-value-key="restPauseSec">
-            <span class="lrow-i" style="--tint:var(--acc)"><.icon name="hero-bolt" /></span><span class="lrow-m"><span class="lrow-t">{t(
-              @locale,
-              "Rest-pause rest"
-            )}</span></span><span class="lrow-v">{seconds_label(@state["restPauseSec"], @locale)}</span><.icon
-              name="hero-chevron-right"
-              class="lrow-c"
-            />
-          </button>
         </div>
       </section>
 
@@ -3178,6 +3094,45 @@ defmodule TamagymWeb.GymLive do
           </div>
         </div>
 
+        <div
+          :if={@kind == :ai_exercise_suggestions && @ai_loading == :suggestions}
+          class="ai-loading"
+        >
+          <.icon name="hero-sparkles" />
+          <h3>{t(@locale, "Finding exercise suggestions…")}</h3>
+        </div>
+
+        <div :if={@kind == :ai_exercise_suggestions && @ai_loading != :suggestions}>
+          <h3>{t(@locale, "Choose a suggested exercise")}</h3>
+          <div :if={@ai_error} class="ai-error">{@ai_error}</div>
+          <div class="list ai-suggestions">
+            <button
+              :for={suggestion <- @ai_alternatives}
+              class="item"
+              phx-click="ai:suggestion-select"
+              phx-value-id={suggestion["exercise_id"]}
+            >
+              <img
+                class="thumb"
+                src={exercise_thumbnail(@state, suggestion["exercise_id"])}
+                alt=""
+              />
+              <div class="grow" style="text-align:left">
+                <div class="tt capitalize">
+                  {exercise_name(@state, suggestion["exercise_id"])}
+                </div>
+                <div class="ss">{suggestion["reason"]}</div>
+              </div>
+              <.icon name="hero-plus" class="accent" />
+            </button>
+          </div>
+          <button
+            :if={@ai_error}
+            class="btn"
+            phx-click="ai:suggestions-generate"
+          >{t(@locale, "Generate again")}</button>
+        </div>
+
         <div :if={@kind == :ai_alternative_reason && @alternative_exercise}>
           <h3>{t(@locale, "Why can't you do this exercise?")}</h3>
           <div class="item ai-original-exercise">
@@ -3244,6 +3199,17 @@ defmodule TamagymWeb.GymLive do
           <h3>
             {t(@locale, if(@kind == :swap_exercise, do: "Swap exercise", else: "Add exercise"))}
           </h3>
+          <button
+            :if={@kind == :workout_exercise && @ai_models != []}
+            class="btn tinted exercise-picker-ai"
+            phx-click="ai:suggestions-generate"
+          ><.icon name="hero-sparkles" />{t(@locale, "Suggest with AI")}</button>
+          <button
+            :if={@kind == :swap_exercise && @ai_models != []}
+            class="btn tinted exercise-picker-ai"
+            phx-click="ai:alternatives-open"
+            phx-value-index={@modal_value}
+          ><.icon name="hero-sparkles" />{t(@locale, "Find alternatives with AI")}</button>
           <.search_box locale={@locale} search={@search} />
           <div class="list workout-exercise-picker">
             <button
@@ -3314,10 +3280,13 @@ defmodule TamagymWeb.GymLive do
                 ><.icon name="hero-minus" /></button><span class="val"><.input
                   class="num"
                   name="sets"
-                  type="number"
+                  type="text"
                   value={@routine_config["sets"] || 3}
                   min="1"
                   max="20"
+                  inputmode="numeric"
+                  data-numeric-input="integer"
+                  autocomplete="off"
                 /></span><button
                   type="button"
                   phx-click="routine:step-exercise"
@@ -3338,9 +3307,12 @@ defmodule TamagymWeb.GymLive do
                 ><.icon name="hero-minus" /></button><span class="val"><.input
                   class="num"
                   name="reps"
-                  type="number"
+                  type="text"
                   value={@routine_config["reps"] || 10}
                   min="0"
+                  inputmode="numeric"
+                  data-numeric-input="integer"
+                  autocomplete="off"
                 /></span><button
                   type="button"
                   phx-click="routine:step-exercise"
@@ -3364,10 +3336,13 @@ defmodule TamagymWeb.GymLive do
                 ><.icon name="hero-minus" /></button><span class="val"><.input
                   class="num"
                   name="weight"
-                  type="number"
+                  type="text"
                   value={@routine_config["weight"] || 0}
                   min="0"
                   step="0.5"
+                  inputmode="decimal"
+                  data-numeric-input="decimal"
+                  autocomplete="off"
                 /></span><button
                   type="button"
                   phx-click="routine:step-exercise"
@@ -3389,7 +3364,7 @@ defmodule TamagymWeb.GymLive do
               <div class="row between technique-heading">
                 <b>{t(@locale, "Set")} {set_index + 1}</b><span :if={technique} class="tag acc">{t(
                   @locale,
-                  if(technique["type"] == "dropset", do: "Drop-set", else: "Rest-pause")
+                  "Drop-set"
                 )}</span>
               </div>
               <div class="seg intensifier-seg">
@@ -3397,8 +3372,7 @@ defmodule TamagymWeb.GymLive do
                   :for={
                     {type, label} <- [
                       {"none", t(@locale, "None")},
-                      {"dropset", t(@locale, "Drop-set")},
-                      {"restpause", t(@locale, "Rest-pause")}
+                      {"dropset", t(@locale, "Drop-set")}
                     ]
                   }
                   type="button"
@@ -3452,54 +3426,6 @@ defmodule TamagymWeb.GymLive do
                       phx-value-index={elem(@modal_value, 1)}
                       phx-value-set={set_index}
                       phx-value-field="pct"
-                      phx-value-direction="up"
-                    ><.icon name="hero-plus" /></button>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                :if={technique && technique["type"] == "restpause"}
-                class="routine-intensifier-controls"
-              >
-                <div class="config-step">
-                  <span class="config-label">{t(@locale, "Extra reps")}</span><div class="stp">
-                    <button
-                      type="button"
-                      phx-click="routine:set-technique-step"
-                      phx-value-index={elem(@modal_value, 1)}
-                      phx-value-set={set_index}
-                      phx-value-field="totalReps"
-                      phx-value-direction="down"
-                    ><.icon name="hero-minus" /></button><span class="val intensity-value">{technique[
-                      "totalReps"
-                    ]}</span><button
-                      type="button"
-                      phx-click="routine:set-technique-step"
-                      phx-value-index={elem(@modal_value, 1)}
-                      phx-value-set={set_index}
-                      phx-value-field="totalReps"
-                      phx-value-direction="up"
-                    ><.icon name="hero-plus" /></button>
-                  </div>
-                </div>
-                <div class="config-step">
-                  <span class="config-label">{t(@locale, "Rest (s)")}</span><div class="stp">
-                    <button
-                      type="button"
-                      phx-click="routine:set-technique-step"
-                      phx-value-index={elem(@modal_value, 1)}
-                      phx-value-set={set_index}
-                      phx-value-field="restSec"
-                      phx-value-direction="down"
-                    ><.icon name="hero-minus" /></button><span class="val intensity-value">{technique[
-                      "restSec"
-                    ]}s</span><button
-                      type="button"
-                      phx-click="routine:set-technique-step"
-                      phx-value-index={elem(@modal_value, 1)}
-                      phx-value-set={set_index}
-                      phx-value-field="restSec"
                       phx-value-direction="up"
                     ><.icon name="hero-plus" /></button>
                   </div>
@@ -3606,7 +3532,7 @@ defmodule TamagymWeb.GymLive do
           </.form>
         </div>
 
-        <div :if={@kind in [:bodyweight, :bodyweight_start]}>
+        <div :if={@kind == :bodyweight}>
           <h3>{t(@locale, "Log body weight")}</h3>
           <div class="muted small">
             {t(@locale, "Today")} · {date_label(@locale, Date.utc_today())}
@@ -3615,25 +3541,19 @@ defmodule TamagymWeb.GymLive do
             <div class="weight-entry">
               <.input
                 name="weight"
-                type="number"
+                type="text"
                 value={@suggested_weight}
                 min="1"
                 step="0.1"
                 inputmode="decimal"
+                data-numeric-input="decimal"
+                autocomplete="off"
                 autofocus
                 required
               /><span>{@state["unit"]}</span>
             </div>
-            <button class="btn primary" type="submit">{t(
-              @locale,
-              if(@kind == :bodyweight_start, do: "Save & start workout", else: "Save")
-            )}</button>
+            <button class="btn primary" type="submit">{t(@locale, "Save")}</button>
           </.form>
-          <button
-            :if={@kind == :bodyweight_start}
-            class="btn ghost dim"
-            phx-click="workout:start-without-weight"
-          >{t(@locale, "Start without weighing in")}</button>
           <div :if={@recent_weights != []}>
             <h4 class="sec">{t(@locale, "Recent weigh-ins")}</h4>
             <div class="list recent-weights">
@@ -3657,11 +3577,13 @@ defmodule TamagymWeb.GymLive do
             <div class="weight-entry">
               <.input
                 name="weight"
-                type="number"
+                type="text"
                 value={@state["targetW"] || @suggested_weight}
                 min="1"
                 step="0.1"
                 inputmode="decimal"
+                data-numeric-input="decimal"
+                autocomplete="off"
                 required
               /><span>{@state["unit"]}</span>
             </div>
@@ -4093,7 +4015,10 @@ defmodule TamagymWeb.GymLive do
         name="hero-arrows-pointing-out"
         class="media-expand"
       /><span>{t(@locale, "Minimize")}</span></button>
-      <span class="gifhint"><.icon name="hero-pause" /><span>{t(@locale, "tap to pause")}</span></span>
+      <button type="button" class="gifhint"><.icon name="hero-pause" /><span>{t(
+        @locale,
+        "tap to pause"
+      )}</span></button>
     </div>
     """
   end
@@ -4318,7 +4243,8 @@ defmodule TamagymWeb.GymLive do
     legacy = config["intensifier"]
 
     Enum.map(0..(count - 1), fn index ->
-      if index < length(saved), do: Enum.at(saved, index), else: legacy
+      technique = if index < length(saved), do: Enum.at(saved, index), else: legacy
+      if match?(%{"type" => "dropset"}, technique), do: technique, else: nil
     end)
   end
 
@@ -4346,13 +4272,8 @@ defmodule TamagymWeb.GymLive do
       |> routine_set_techniques()
       |> Enum.with_index()
       |> Enum.reject(fn {technique, _index} -> is_nil(technique) end)
-      |> Enum.map(fn {technique, index} ->
-        name =
-          if technique["type"] == "dropset",
-            do: t(locale, "Drop-set"),
-            else: t(locale, "Rest-pause")
-
-        "#{t(locale, "Set")} #{index + 1}: #{name}"
+      |> Enum.map(fn {_technique, index} ->
+        "#{t(locale, "Set")} #{index + 1}: #{t(locale, "Drop-set")}"
       end)
 
     if techniques == [], do: base, else: "#{base} · #{Enum.join(techniques, " · ")}"
@@ -4472,7 +4393,7 @@ defmodule TamagymWeb.GymLive do
     })
   end
 
-  defp preference(%{"key" => key, "value" => value}) when key in ~w(restSec restPauseSec),
+  defp preference(%{"key" => key, "value" => value}) when key == "restSec",
     do: {key, max(0, State.integer(value, if(key == "restSec", do: 90, else: 15)))}
 
   defp preference(%{"key" => "unit", "value" => value}) when value in ~w(kg lb),
@@ -4501,14 +4422,12 @@ defmodule TamagymWeb.GymLive do
     [%{value: 0, label: t(locale, "Off")} | seconds_options([60, 90, 120, 150, 180])]
   end
 
-  defp setting_options("restPauseSec", _locale), do: seconds_options([10, 15, 20, 30])
   defp setting_options(_key, _locale), do: []
 
   defp seconds_options(values), do: Enum.map(values, &%{value: &1, label: "#{&1}s"})
 
   defp setting_title("lang", locale), do: t(locale, "Language")
   defp setting_title("restSec", locale), do: t(locale, "Rest timer")
-  defp setting_title("restPauseSec", locale), do: t(locale, "Rest-pause rest")
   defp setting_title(_key, _locale), do: ""
 
   defp seconds_label(value, locale) do
@@ -4567,13 +4486,6 @@ defmodule TamagymWeb.GymLive do
          locale
        ) do
     "#{t(locale, "Last set")}: #{t(locale, "Drop-set")} · #{technique["count"]} × -#{technique["pct"]}%"
-  end
-
-  defp ai_technique_label(
-         %{"last_set_technique" => %{"type" => "restpause"} = technique},
-         locale
-       ) do
-    "#{t(locale, "Last set")}: #{t(locale, "Rest-pause")} · +#{technique["totalReps"]} reps · #{technique["restSec"]}s"
   end
 
   defp ai_technique_label(_prescription, _locale), do: nil
@@ -4652,7 +4564,6 @@ defmodule TamagymWeb.GymLive do
   end
 
   defp modal_info(:bodyweight), do: {:bodyweight, nil}
-  defp modal_info({:bodyweight_start, _routine_id}), do: {:bodyweight_start, nil}
   defp modal_info(:goal), do: {:goal, nil}
   defp modal_info(:ai_week), do: {:ai_week, nil}
   defp modal_info(:ai_week_loading), do: {:ai_week_loading, nil}
@@ -4661,6 +4572,7 @@ defmodule TamagymWeb.GymLive do
   defp modal_info({:ai_day_loading, day}), do: {:ai_day_loading, day}
   defp modal_info({:ai_day_preview, day}), do: {:ai_day_preview, day}
   defp modal_info(:ai_model), do: {:ai_model, nil}
+  defp modal_info(:ai_exercise_suggestions), do: {:ai_exercise_suggestions, nil}
   defp modal_info({:ai_alternative_reason, index}), do: {:ai_alternative_reason, index}
   defp modal_info({:ai_alternatives, index}), do: {:ai_alternatives, index}
   defp modal_info(:custom_exercise), do: {:custom_exercise, nil}

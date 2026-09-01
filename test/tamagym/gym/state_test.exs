@@ -22,6 +22,30 @@ defmodule Tamagym.Gym.StateTest do
     assert State.workout_volume(workout) == 320.0
   end
 
+  test "editing the first work set fills the following work sets" do
+    warmup = %{"w" => 10.0, "r" => 10, "done" => false, "phase" => "warmup"}
+    work = %{"w" => 20.0, "r" => 10, "done" => false, "phase" => "work"}
+
+    state =
+      active_state(work)
+      |> put_in(
+        ["active", "entries", Access.at(0), "sets"],
+        [warmup, work, work, work]
+      )
+      |> State.update_set(0, 1, %{"w" => 32.5, "r" => 12})
+
+    [unchanged_warmup | work_sets] =
+      state["active"]["entries"] |> List.first() |> Map.fetch!("sets")
+
+    assert unchanged_warmup == warmup
+    assert Enum.all?(work_sets, &(&1["w"] == 32.5 && &1["r"] == 12))
+  end
+
+  test "numbers accept a comma decimal separator and normalize leading zeroes" do
+    assert State.number("12,5") == 12.5
+    assert State.integer("015") == 15
+  end
+
   test "drop sets keep independent weight and reps and add to volume" do
     state = active_state(%{"w" => 40.0, "r" => 10, "done" => false})
     state = State.add_drop(state, 0, 0)
@@ -69,71 +93,54 @@ defmodule Tamagym.Gym.StateTest do
     assert drop_set["drops"] == [%{"w" => 40.0, "r" => 10}, %{"w" => 32.0, "r" => 10}]
   end
 
-  test "planned rest-pause adds bursts only to its selected set" do
-    {state, routine_id} = State.add_routine(State.defaults(), "Rest-pause day")
-    state = State.add_routine_exercise(state, routine_id, "0001")
-
-    state =
-      State.configure_routine_exercise(state, routine_id, 0, %{
-        "sets" => 3,
-        "reps" => 10,
-        "setTechniques" => [
-          nil,
-          nil,
-          %{"type" => "restpause", "totalReps" => 8, "restSec" => 15}
+  test "clean removes legacy rest-pause settings and plans while preserving reps" do
+    legacy =
+      State.defaults()
+      |> Map.put("restPauseSec", 15)
+      |> Map.put("routines", [
+        %{
+          "id" => "legacy",
+          "ex" => [
+            %{
+              "id" => "0023",
+              "setTechniques" => [nil, %{"type" => "restpause", "restSec" => 15}]
+            }
+          ]
+        }
+      ])
+      |> Map.put("active", %{
+        "entries" => [
+          %{
+            "id" => "0023",
+            "sets" => [
+              %{
+                "type" => "restpause",
+                "r" => 15,
+                "clusters" => [%{"r" => 5, "restSec" => 15}]
+              }
+            ]
+          }
         ]
       })
-      |> State.start_workout(routine_id)
 
-    [first, second, rest_pause] =
-      state["active"]["entries"] |> List.first() |> Map.fetch!("sets")
+    cleaned = State.clean(legacy)
+    refute Map.has_key?(cleaned, "restPauseSec")
 
-    refute Map.has_key?(first, "type")
-    refute Map.has_key?(second, "type")
-    assert rest_pause["type"] == "restpause"
-    assert rest_pause["r"] == 18
-    assert Enum.map(rest_pause["clusters"], & &1["r"]) == [4, 2, 1, 1]
-    assert Enum.all?(rest_pause["clusters"], &(&1["restSec"] == 15))
-  end
+    assert get_in(cleaned, ["routines", Access.at(0), "ex", Access.at(0), "setTechniques"]) == [
+             nil,
+             nil
+           ]
 
-  test "bursts remain attached to their set and keep total reps in sync" do
-    state = active_state(%{"w" => 30.0, "r" => 10, "done" => false})
-    state = State.add_burst(state, 0, 0, 15)
-
-    set = get_set(state)
-    assert set["type"] == "restpause"
+    set = get_in(cleaned, ["active", "entries", Access.at(0), "sets", Access.at(0)])
     assert set["r"] == 15
-    assert [%{"r" => 5, "restSec" => 15}] = set["clusters"]
-
-    state = State.step_burst(state, 0, 0, 0, 1)
-    assert get_set(state)["r"] == 16
-    assert [%{"r" => 6}] = Enum.map(get_set(state)["clusters"], &Map.take(&1, ["r"]))
-
-    state = State.remove_burst(state, 0, 0, 0)
-    set = get_set(state)
-    assert set["r"] == 10
-    refute Map.has_key?(set, "clusters")
     refute Map.has_key?(set, "type")
+    refute Map.has_key?(set, "clusters")
   end
 
   test "an AI week creates exact-date overrides and replaces the recurring weekly schedule" do
     start_date = ~D[2026-09-07]
 
-    plan =
-      ai_plan(start_date)
-      |> update_in(["days"], fn days ->
-        List.update_at(days, 0, fn day ->
-          update_in(day["exercises"], fn [prescription] ->
-            [
-              Map.put(prescription, "last_set_technique", %{
-                "type" => "restpause",
-                "totalReps" => 5,
-                "restSec" => 15
-              })
-            ]
-          end)
-        end)
-      end)
+    plan = ai_plan(start_date)
 
     user_routine = %{
       "id" => "user-routine",
@@ -167,9 +174,6 @@ defmodule Tamagym.Gym.StateTest do
 
     assert [%{"id" => "0001", "sets" => 3, "reps" => 10, "bodyweight" => true}] =
              Enum.map(first["ex"], &Map.take(&1, ["id", "sets", "reps", "bodyweight"]))
-
-    assert [nil, nil, %{"type" => "restpause", "totalReps" => 5, "restSec" => 15}] =
-             first["ex"] |> List.first() |> Map.fetch!("setTechniques")
 
     regenerated = State.apply_ai_week(state, plan, Date.add(start_date, 1))
     assert length(regenerated["routines"]) == 7

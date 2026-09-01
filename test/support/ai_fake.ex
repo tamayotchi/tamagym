@@ -11,6 +11,7 @@ defmodule Tamagym.AI.Fake do
       "seven_day_plan" -> {:ok, week(context)}
       "single_day_routine" -> {:ok, day_routine(context)}
       "exercise_alternatives" -> {:ok, alternatives(context)}
+      "exercise_suggestions" -> {:ok, suggestions(context)}
       _task -> {:error, :unknown_fake_task}
     end
   end
@@ -29,9 +30,7 @@ defmodule Tamagym.AI.Fake do
           "note" => "Use controlled repetitions.",
           "last_set_technique" => "none",
           "drop_count" => 1,
-          "drop_percentage" => 20,
-          "rest_pause_extra_reps" => 5,
-          "rest_pause_seconds" => 15
+          "drop_percentage" => 20
         }
       end)
 
@@ -91,9 +90,7 @@ defmodule Tamagym.AI.Fake do
           "note" => "Use controlled repetitions.",
           "last_set_technique" => if(index == length(selected) - 1, do: "dropset", else: "none"),
           "drop_count" => 1,
-          "drop_percentage" => 20,
-          "rest_pause_extra_reps" => 5,
-          "rest_pause_seconds" => 15
+          "drop_percentage" => 20
         }
       end)
 
@@ -116,6 +113,20 @@ defmodule Tamagym.AI.Fake do
       end)
 
     %{"alternatives" => alternatives}
+  end
+
+  defp suggestions(context) do
+    suggestions =
+      context["candidate_exercises"]
+      |> Enum.take(3)
+      |> Enum.map(fn exercise ->
+        %{
+          "exercise_id" => exercise["id"],
+          "reason" => "Adds complementary work to the current session."
+        }
+      end)
+
+    %{"suggestions" => suggestions}
   end
 
   defp prompt_context(prompt) do

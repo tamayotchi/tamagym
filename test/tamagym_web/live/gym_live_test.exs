@@ -192,7 +192,20 @@ defmodule TamagymWeb.GymLiveTest do
     conn = init_test_session(conn, user_id: user.id)
     {:ok, view, _html} = live(conn, ~p"/workout")
 
-    view |> element("button[phx-click='ai:alternatives-open']") |> render_click()
+    refute has_element?(
+             view,
+             ".workout-exercise-actions button[phx-click='ai:alternatives-open']"
+           )
+
+    view |> element("button[phx-click='workout:swap-open']") |> render_click()
+
+    assert has_element?(
+             view,
+             "#modal-root button[phx-click='ai:alternatives-open']",
+             "Find alternatives with AI"
+           )
+
+    view |> element("#modal-root button[phx-click='ai:alternatives-open']") |> render_click()
     assert has_element?(view, "#modal-root", "Why can't you do this exercise?")
 
     view
@@ -212,6 +225,52 @@ defmodule TamagymWeb.GymLiveTest do
       |> Map.fetch!("id")
 
     refute replacement_id == "0001"
+  end
+
+  test "a user can add an AI-suggested exercise to the active workout", %{conn: conn} do
+    {:ok, user} =
+      Accounts.register_user(%{email: "suggestions@example.com", password: "long-password"})
+
+    state =
+      State.defaults()
+      |> Map.put("active", %{
+        "id" => "active-suggestions",
+        "d" => Date.to_iso8601(Date.utc_today()),
+        "start" => System.system_time(:millisecond),
+        "name" => "Back + Biceps",
+        "cur" => 0,
+        "entries" => [
+          %{
+            "id" => "0007",
+            "target" => %{"sets" => 3, "reps" => 10},
+            "sets" => [%{"w" => 20, "r" => 10, "done" => false}]
+          }
+        ]
+      })
+
+    assert {:ok, :ok} = Gym.put_data(user, state)
+
+    conn = init_test_session(conn, user_id: user.id)
+    {:ok, view, _html} = live(conn, ~p"/workout")
+
+    view |> element("button[phx-click='workout:exercise-picker']") |> render_click()
+
+    assert has_element?(
+             view,
+             "#modal-root button[phx-click='ai:suggestions-generate']",
+             "Suggest with AI"
+           )
+
+    view |> element("#modal-root button[phx-click='ai:suggestions-generate']") |> render_click()
+
+    assert render_async(view) =~ "Choose a suggested exercise"
+    assert has_element?(view, "#modal-root .ai-suggestions button.item")
+
+    view |> element("#modal-root .ai-suggestions button.item:first-child") |> render_click()
+
+    entries = Gym.get_data(user)["active"]["entries"]
+    assert length(entries) == 2
+    assert entries |> Enum.map(& &1["id"]) |> Enum.uniq() |> length() == 2
   end
 
   test "a routine can become a completed workout", %{conn: conn} do
@@ -239,7 +298,11 @@ defmodule TamagymWeb.GymLiveTest do
              "#exercise-media-routine-config-0001 img[src='/gif/0001-2gPfomN.gif']"
            )
 
-    refute has_element?(routine_view, "#routine-config-form input[name='weight'][type='number']")
+    refute has_element?(
+             routine_view,
+             "#routine-config-form input[name='weight'][data-numeric-input='decimal']"
+           )
+
     assert has_element?(routine_view, ".routine-plan-row", "3 sets × 10 reps")
     assert has_element?(routine_view, ".routine-muscle-card", "What this session hits")
     assert has_element?(routine_view, ".routine-muscle-card .bodymap .bm-v")
@@ -254,6 +317,11 @@ defmodule TamagymWeb.GymLiveTest do
              "Drop-set"
            )
 
+    refute has_element?(
+             routine_view,
+             "button[phx-click='routine:set-technique'][phx-value-type='restpause']"
+           )
+
     routine_view
     |> element(
       "button[phx-click='routine:set-technique'][phx-value-set='2'][phx-value-type='dropset']"
@@ -261,39 +329,16 @@ defmodule TamagymWeb.GymLiveTest do
     |> render_click()
 
     assert has_element?(routine_view, ".routine-set-technique:nth-child(3)", "Weight drop (%)")
-    assert has_element?(routine_view, "#routine-config-form input[name='weight'][type='number']")
+
+    assert has_element?(
+             routine_view,
+             "#routine-config-form input[name='weight'][data-numeric-input='decimal']"
+           )
+
     assert has_element?(routine_view, ".routine-plan-row", "Set 3: Drop-set")
 
     assert [%{"ex" => [%{"setTechniques" => [nil, nil, %{"type" => "dropset"}]}]}] =
              Gym.get_data(user)["routines"]
-
-    routine_view
-    |> element(
-      "button[phx-click='routine:set-technique'][phx-value-set='0'][phx-value-type='restpause']"
-    )
-    |> render_click()
-
-    assert has_element?(routine_view, ".routine-set-technique:first-child", "Extra reps")
-
-    assert [
-             %{
-               "ex" => [
-                 %{
-                   "setTechniques" => [
-                     %{"type" => "restpause"},
-                     nil,
-                     %{"type" => "dropset"}
-                   ]
-                 }
-               ]
-             }
-           ] = Gym.get_data(user)["routines"]
-
-    routine_view
-    |> element(
-      "button[phx-click='routine:set-technique'][phx-value-set='0'][phx-value-type='none']"
-    )
-    |> render_click()
 
     routine_view
     |> element(
@@ -324,29 +369,30 @@ defmodule TamagymWeb.GymLiveTest do
     |> element("button[phx-click='workout:prepare']", "New routine")
     |> render_click()
 
-    assert render(workout_view) =~ "Log body weight"
-
-    workout_view
-    |> form("form[phx-submit='bodyweight:save']", %{"weight" => "80"})
-    |> render_submit()
-
     assert_patch(workout_view, ~p"/workout")
+    refute has_element?(workout_view, "#modal-root", "Log body weight")
 
     {:ok, active_view, html} = live(conn, ~p"/workout")
     assert html =~ "3/4 sit-up"
     assert html =~ "/gif/0001-2gPfomN.gif"
     refute has_element?(active_view, "#set-0-0 input[name='w']")
     assert has_element?(active_view, "#set-0-0 .stp.r")
+    assert has_element?(active_view, ".workout-sets > .workout-warmup-action + .sethead")
     assert has_element?(active_view, "button[phx-click='workout:swap-open']", "Swap exercise")
 
-    assert has_element?(
+    refute has_element?(
              active_view,
-             "button[phx-click='ai:alternatives-open']",
-             "Find alternatives with AI"
+             ".workout-exercise-actions button[phx-click='ai:alternatives-open']"
            )
 
     active_view |> element("button[phx-click='workout:swap-open']") |> render_click()
     assert has_element?(active_view, "#modal-root", "Swap exercise")
+
+    assert has_element?(
+             active_view,
+             "#modal-root button[phx-click='ai:alternatives-open']",
+             "Find alternatives with AI"
+           )
 
     active_view
     |> form("#exercise-search", %{"query" => "alternate biceps curl"})
@@ -359,6 +405,15 @@ defmodule TamagymWeb.GymLiveTest do
     assert has_element?(active_view, "#set-0-0 input[name='w']")
     assert render(active_view) =~ "alternate biceps curl"
     assert has_element?(active_view, "button[phx-click='drop:add'][phx-value-set='0']", "+ Drop")
+
+    active_view
+    |> form("#set-0-0", %{"entry" => "0", "set" => "0", "w" => "012,5", "r" => "015"})
+    |> render_change()
+
+    Enum.each(0..2, fn set_index ->
+      assert has_element?(active_view, "#set-0-#{set_index} input[name='w'][value='12.5']")
+      assert has_element?(active_view, "#set-0-#{set_index} input[name='r'][value='15']")
+    end)
 
     active_view |> element("button[phx-click='drop:add'][phx-value-set='0']") |> render_click()
     assert has_element?(active_view, ".drop-row", "Drop 1")
@@ -388,7 +443,7 @@ defmodule TamagymWeb.GymLiveTest do
     |> element("#set-0-0 button[phx-click='set:step'][phx-value-direction='up']")
     |> render_click()
 
-    assert has_element?(active_view, "#set-0-0 input[name='r'][value='11']")
+    assert has_element?(active_view, "#set-0-0 input[name='r'][value='16']")
     assert has_element?(active_view, "#set-0-2")
     refute has_element?(active_view, "#set-0-3")
 
@@ -400,13 +455,6 @@ defmodule TamagymWeb.GymLiveTest do
     assert render(active_view) =~ "Warm-up"
     active_view |> element("button.warm-remove[phx-click='set:remove']") |> render_click()
     refute has_element?(active_view, ".setrow.warmup")
-
-    active_view |> element("button[phx-click='burst:add'][phx-value-set='0']") |> render_click()
-    assert has_element?(active_view, ".burst-row", "Burst 1")
-    active_view |> element(".burst-row button[phx-click='rest:start']") |> render_click()
-    assert_push_event(active_view, "rest:start", %{seconds: 15})
-    active_view |> element(".burst-row button[phx-click='burst:remove']") |> render_click()
-    refute has_element?(active_view, ".burst-row")
 
     active_view |> element("button[phx-click='set:add']", "Add set") |> render_click()
     assert has_element?(active_view, "#set-0-3")
@@ -427,16 +475,15 @@ defmodule TamagymWeb.GymLiveTest do
 
     state = Gym.get_data(user)
     assert state["active"] == nil
-    assert [%{"w" => 80.0}] = state["bodyweight"]
+    assert state["bodyweight"] == []
 
     assert [
              %{
-               "bw" => 80.0,
                "entries" => [%{"sets" => [%{"done" => true, "w" => unloaded, "r" => 8} | _]}]
-             }
-           ] =
-             state["workouts"]
+             } = workout
+           ] = state["workouts"]
 
+    assert is_nil(workout["bw"])
     assert unloaded == 0.0
 
     {:ok, stats_view, stats_html} = live(conn, ~p"/stats")
@@ -446,7 +493,7 @@ defmodule TamagymWeb.GymLiveTest do
     assert stats_html =~ "Exercise progress"
     assert stats_html =~ "Recent workouts"
     assert has_element?(stats_view, ".stats-tiles .tile", "Workouts")
-    assert has_element?(stats_view, "#stats-weight-chart [data-chart-point][data-value='80']")
+    refute has_element?(stats_view, "#stats-weight-chart")
     assert has_element?(stats_view, "button[phx-click='stats:exercise-open']", "3/4 sit-up")
 
     stats_view |> element("button[phx-click='bodyweight:open']", "Log") |> render_click()

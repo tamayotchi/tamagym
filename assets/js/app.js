@@ -61,6 +61,65 @@ const ExerciseMedia = {
   }
 }
 
+const NumericInputs = {
+  mounted() {
+    this.onFocusIn = event => {
+      const input = this.numericInput(event.target)
+      if (!input) return
+
+      window.requestAnimationFrame(() => {
+        if (document.activeElement !== input) return
+        input.select()
+        try { input.setSelectionRange(0, input.value.length) } catch (_) {}
+      })
+    }
+
+    this.onInput = event => {
+      const input = this.numericInput(event.target)
+      if (!input) return
+
+      const value = input.value
+      const cursor = input.selectionStart
+      const normalized = this.normalize(value, input.dataset.numericInput)
+      if (normalized === value) return
+
+      input.value = normalized
+      if (cursor !== null) {
+        const nextCursor = this.normalize(value.slice(0, cursor), input.dataset.numericInput).length
+        try { input.setSelectionRange(nextCursor, nextCursor) } catch (_) {}
+      }
+    }
+
+    this.el.addEventListener("focusin", this.onFocusIn)
+    this.el.addEventListener("input", this.onInput, true)
+  },
+
+  destroyed() {
+    this.el.removeEventListener("focusin", this.onFocusIn)
+    this.el.removeEventListener("input", this.onInput, true)
+  },
+
+  numericInput(target) {
+    return target?.matches?.("input[data-numeric-input]") ? target : null
+  },
+
+  normalize(value, kind) {
+    const decimal = kind === "decimal"
+    let normalized = String(value).replace(/,/g, decimal ? "." : "")
+    normalized = normalized.replace(decimal ? /[^0-9.]/g : /[^0-9]/g, "")
+
+    if (decimal) {
+      const decimalAt = normalized.indexOf(".")
+      if (decimalAt >= 0) {
+        normalized = normalized.slice(0, decimalAt + 1) + normalized.slice(decimalAt + 1).replace(/\./g, "")
+      }
+      if (normalized.startsWith(".")) normalized = `0${normalized}`
+    }
+
+    return normalized.replace(/^0+(?=\d)/, "")
+  }
+}
+
 const ScrollEnd = {
   mounted() { this.el.scrollLeft = this.el.scrollWidth }
 }
@@ -249,7 +308,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {GuestStore, Elapsed, ExerciseMedia, PointChart, RestTimer, ScrollEnd},
+  hooks: {GuestStore, Elapsed, ExerciseMedia, NumericInputs, PointChart, RestTimer, ScrollEnd},
 })
 
 liveSocket.connect()
