@@ -103,6 +103,11 @@ defmodule Tamagym.Gym.AIPlannerTest do
             "id" => "0001",
             "target" => %{"sets" => 3, "reps" => 10},
             "sets" => [%{"w" => 0, "r" => 10, "done" => false}]
+          },
+          %{
+            "id" => "0002",
+            "target" => %{"sets" => 3, "reps" => 10},
+            "sets" => [%{"w" => 0, "r" => 10, "done" => false}]
           }
         ]
       })
@@ -112,6 +117,6 @@ defmodule Tamagym.Gym.AIPlannerTest do
 
     assert length(alternatives) == 3
     assert Enum.all?(alternatives, &is_binary(&1["exercise_id"]))
-    refute Enum.any?(alternatives, &(&1["exercise_id"] == "0001"))
+    refute Enum.any?(alternatives, &(&1["exercise_id"] in ["0001", "0002"]))
   end
 end

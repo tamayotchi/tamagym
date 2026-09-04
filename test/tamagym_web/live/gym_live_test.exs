@@ -90,6 +90,42 @@ defmodule TamagymWeb.GymLiveTest do
     assert Gym.get_data(user)["dayPlan"][Date.to_iso8601(Date.utc_today())] == routine_id
   end
 
+  test "an authenticated user can schedule and remove a weekly sport", %{conn: conn} do
+    {:ok, user} =
+      Accounts.register_user(%{email: "sports@example.com", password: "long-password"})
+
+    conn = init_test_session(conn, user_id: user.id)
+    {:ok, view, _html} = live(conn, ~p"/plan")
+
+    view |> element("button[phx-click='schedule:open'][phx-value-day='2']") |> render_click()
+    assert has_element?(view, "#sport-form input[name='start'][type='time']")
+    assert has_element?(view, "#sport-form input[name='duration'][type='number']")
+
+    view
+    |> form("#sport-form", %{
+      "day" => "2",
+      "name" => "Padel",
+      "start" => "19:30",
+      "duration" => "90"
+    })
+    |> render_submit()
+
+    assert [%{"name" => "Padel", "day" => "2", "start" => "19:30", "duration" => 90}] =
+             user
+             |> Gym.get_data()
+             |> Map.fetch!("sports")
+             |> Enum.map(&Map.take(&1, ["name", "day", "start", "duration"]))
+
+    assert has_element?(
+             view,
+             "button[phx-click='schedule:open'][phx-value-day='2']",
+             "Padel · 19:30 · 90 min"
+           )
+
+    view |> element("#modal-root button[phx-click='sport:delete']") |> render_click()
+    assert Gym.get_data(user)["sports"] == []
+  end
+
   test "an authenticated user can generate, review, and apply an AI week", %{conn: conn} do
     {:ok, user} =
       Accounts.register_user(%{email: "planner@example.com", password: "long-password"})

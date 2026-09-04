@@ -372,6 +372,7 @@ h4.sec{
 .wday .dot{width:5px;height:5px;border-radius:50%;background:transparent;margin:0 auto}
 .wday .dot.plan{background:var(--label-3)}
 .wday .dot.ovr{background:var(--orange)}
+.wday .dot.sport{background:var(--purple)}
 .wday .dot.done{background:var(--acc)}
 .wday:active{background:var(--surface-2)}
 .wday.today .num{
@@ -430,6 +431,15 @@ h4.sec{
 .schedule-assignment span{min-width:0;overflow-wrap:anywhere}
 .schedule-assignment.rest{color:var(--label-3)}
 .schedule-assignment.rest .icn{color:var(--label-3)}
+.schedule-assignment.sport{font-size:14px;color:var(--label-2)}
+.schedule-assignment.sport .icn{color:var(--purple)}
+.today-sport{display:flex;align-items:center;gap:4px;color:var(--purple);font-size:12px;margin-top:3px}
+.today-sport .icn{width:12px;height:12px}
+.sport-list{margin-bottom:10px}
+.sport-item{min-height:54px}
+.sport-form{padding:12px;border-radius:var(--r-card);background:var(--surface-2)}
+.sport-form-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sport-note{margin:9px 2px 16px;line-height:1.4}
 
 /* ---------------------------------------------------------------- chips -- */
 .chips{

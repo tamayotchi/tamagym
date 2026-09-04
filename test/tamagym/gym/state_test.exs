@@ -41,9 +41,63 @@ defmodule Tamagym.Gym.StateTest do
     assert Enum.all?(work_sets, &(&1["w"] == 32.5 && &1["r"] == 12))
   end
 
+  test "editing a later work set fills the following unfinished work sets" do
+    warmup = %{"w" => 10.0, "r" => 10, "done" => false, "phase" => "warmup"}
+    work = %{"w" => 20.0, "r" => 10, "done" => false, "phase" => "work"}
+
+    state =
+      active_state(work)
+      |> put_in(
+        ["active", "entries", Access.at(0), "sets"],
+        [warmup, work, work, work, work]
+      )
+      |> State.update_set(0, 2, %{"w" => 32.5, "r" => 12})
+
+    [unchanged_warmup, unchanged_first_work | updated_work_sets] =
+      state["active"]["entries"] |> List.first() |> Map.fetch!("sets")
+
+    assert unchanged_warmup == warmup
+    assert unchanged_first_work == work
+    assert Enum.all?(updated_work_sets, &(&1["w"] == 32.5 && &1["r"] == 12))
+  end
+
   test "numbers accept a comma decimal separator and normalize leading zeroes" do
     assert State.number("12,5") == 12.5
     assert State.integer("015") == 15
+  end
+
+  test "sports are scheduled by weekday with a start time and duration" do
+    state =
+      State.defaults()
+      |> State.add_sport(%{
+        "name" => "Padel",
+        "day" => "2",
+        "start" => "19:30",
+        "duration" => "90"
+      })
+
+    assert [sport] = State.sports_for_day(state, "2")
+
+    assert Map.take(sport, ["name", "day", "start", "duration"]) == %{
+             "name" => "Padel",
+             "day" => "2",
+             "start" => "19:30",
+             "duration" => 90
+           }
+
+    assert State.sports_for_day(state, "1") == []
+    assert State.remove_sport(state, sport["id"])["sports"] == []
+  end
+
+  test "invalid sport schedule values are ignored" do
+    state = State.defaults()
+
+    assert State.add_sport(state, %{
+             "name" => "Tennis",
+             "day" => "8",
+             "start" => "25:00",
+             "duration" => "0"
+           }) == state
   end
 
   test "drop sets keep independent weight and reps and add to volume" do

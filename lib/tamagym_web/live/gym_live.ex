@@ -81,6 +81,15 @@ defmodule TamagymWeb.GymLive do
       "Todavía no hay registros: añade tu peso para iniciar la gráfica.",
     "No workouts yet." => "Todavía no hay entrenos.",
     "Weekly schedule" => "Horario semanal",
+    "Sports" => "Deportes",
+    "Sport" => "Deporte",
+    "Add sport" => "Añadir deporte",
+    "Start time" => "Hora de inicio",
+    "Duration (minutes)" => "Duración (minutos)",
+    "Remove sport" => "Eliminar deporte",
+    "No gym workout" => "Sin entreno de gimnasio",
+    "Sports stay alongside your gym schedule and are considered by the AI planner." =>
+      "Los deportes se mantienen junto a tu horario de gimnasio y el planificador de IA los tiene en cuenta.",
     "Routines" => "Rutinas",
     "New routine" => "Nueva rutina",
     "Create a routine first, then assign it here." => "Crea primero una rutina y asígnala aquí.",
@@ -627,6 +636,14 @@ defmodule TamagymWeb.GymLive do
      socket
      |> assign(:modal, nil)
      |> persist(State.assign_day(socket.assigns.state, day, routine_id))}
+  end
+
+  def handle_event("sport:add", params, socket) do
+    {:noreply, persist(socket, State.add_sport(socket.assigns.state, params))}
+  end
+
+  def handle_event("sport:delete", %{"id" => id}, socket) do
+    {:noreply, persist(socket, State.remove_sport(socket.assigns.state, id))}
   end
 
   def handle_event("ai:day-open", %{"day" => day}, socket) do
@@ -1531,6 +1548,8 @@ defmodule TamagymWeb.GymLive do
       if body_weight && previous_weight, do: body_weight["w"] - previous_weight["w"], else: nil
 
     week_days = week_days(assigns.state, assigns.today, assigns.week_offset, assigns.locale)
+    weekday = Integer.to_string(rem(Date.day_of_week(assigns.today), 7))
+    today_sports = State.sports_for_day(assigns.state, weekday)
 
     assigns =
       assign(assigns,
@@ -1538,7 +1557,8 @@ defmodule TamagymWeb.GymLive do
         done_today: done_today,
         body_weight: body_weight,
         delta: delta,
-        week_days: week_days
+        week_days: week_days,
+        today_sports: today_sports
       )
 
     ~H"""
@@ -1604,6 +1624,9 @@ defmodule TamagymWeb.GymLive do
             <div style="min-width:0;text-align:left">
               <div class="lbl2">{t(@locale, "Today")}</div>
               <div class="ttl">{today_title(@state, @routine, @done_today, @locale)}</div>
+              <div :for={sport <- @today_sports} class="today-sport">
+                <.icon name="hero-bolt" />{sport["name"]} · {sport_time_label(sport)}
+              </div>
             </div>
           </div>
           <span :if={@state["active"]} class="tag resume">{t(@locale, "Resume")}</span>
@@ -1744,7 +1767,16 @@ defmodule TamagymWeb.GymLive do
                   class="schedule-assignment rest"
                 >
                   <.icon name="hero-moon" />
-                  <span>{t(@locale, "Rest")}</span>
+                  <span>{if State.sports_for_day(@state, day) == [],
+                    do: t(@locale, "Rest"),
+                    else: t(@locale, "No gym workout")}</span>
+                </div>
+                <div
+                  :for={sport <- State.sports_for_day(@state, day)}
+                  class="schedule-assignment sport"
+                >
+                  <.icon name="hero-bolt" />
+                  <span>{sport["name"]} · {sport_time_label(sport)}</span>
                 </div>
               </div>
               <.icon name="hero-chevron-right" class="chev" />
@@ -2930,6 +2962,9 @@ defmodule TamagymWeb.GymLive do
 
     setting_title = if kind == :setting, do: setting_title(modal_value, assigns.locale)
 
+    day_sports =
+      if kind == :day_schedule, do: State.sports_for_day(assigns.state, modal_value), else: []
+
     recent_weights =
       assigns.state["bodyweight"]
       |> Enum.with_index()
@@ -2964,6 +2999,7 @@ defmodule TamagymWeb.GymLive do
         has_day_override: has_day_override,
         setting_options: setting_options,
         setting_title: setting_title,
+        day_sports: day_sports,
         recent_weights: recent_weights,
         suggested_weight: suggested_weight
       )
@@ -3667,6 +3703,61 @@ defmodule TamagymWeb.GymLive do
 
         <div :if={@kind == :day_schedule}>
           <h3>{day_name(@locale, @modal_value)}</h3>
+          <h4 class="sec">{t(@locale, "Sports")}</h4>
+          <div :if={@day_sports != []} class="list sport-list">
+            <div :for={sport <- @day_sports} class="item sport-item">
+              <span class="lrow-i" style="--tint:var(--purple)"><.icon name="hero-bolt" /></span>
+              <div class="grow">
+                <div class="tt">{sport["name"]}</div>
+                <div class="ss">{sport_time_label(sport)}</div>
+              </div>
+              <button
+                class="iconbtn"
+                phx-click="sport:delete"
+                phx-value-id={sport["id"]}
+                aria-label={t(@locale, "Remove sport")}
+              >
+                <.icon name="hero-trash" />
+              </button>
+            </div>
+          </div>
+          <.form
+            for={to_form(%{"name" => "", "start" => "18:00", "duration" => "60"})}
+            id="sport-form"
+            phx-submit="sport:add"
+            class="lv-form sport-form"
+          >
+            <input type="hidden" name="day" value={@modal_value} />
+            <.input name="name" value="" label={t(@locale, "Sport")} maxlength="80" required />
+            <div class="sport-form-fields">
+              <.input
+                name="start"
+                type="time"
+                value="18:00"
+                label={t(@locale, "Start time")}
+                required
+              />
+              <.input
+                name="duration"
+                type="number"
+                value="60"
+                label={t(@locale, "Duration (minutes)")}
+                min="1"
+                max="1440"
+                step="1"
+                required
+              />
+            </div>
+            <button class="btn tinted" type="submit">
+              <.icon name="hero-plus" />{t(@locale, "Add sport")}
+            </button>
+          </.form>
+          <div class="muted small sport-note">
+            {t(
+              @locale,
+              "Sports stay alongside your gym schedule and are considered by the AI planner."
+            )}
+          </div>
           <button
             :if={@ai_models != []}
             class="item ai-day-entry"
@@ -4607,6 +4698,8 @@ defmodule TamagymWeb.GymLive do
     routine_for_day(state, Integer.to_string(rem(Date.day_of_week(date), 7)))
   end
 
+  defp sport_time_label(sport), do: "#{sport["start"]} · #{sport["duration"]} min"
+
   defp parse_date(iso) do
     case Date.from_iso8601(to_string(iso)) do
       {:ok, date} -> date
@@ -4786,12 +4879,14 @@ defmodule TamagymWeb.GymLive do
       iso = Date.to_iso8601(date)
       override = state["dayPlan"][iso]
       planned = State.effective_routine(state, date)
+      sports = State.sports_for_day(state, Integer.to_string(rem(Date.day_of_week(date), 7)))
 
       kind =
         cond do
           MapSet.member?(done_dates, iso) -> "done"
           override && planned -> "ovr"
           planned -> "plan"
+          sports != [] -> "sport"
           true -> nil
         end
 

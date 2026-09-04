@@ -67,6 +67,8 @@ defmodule Tamagym.Gym.AIPlanner do
   - Keep session names short and scannable, for example "Chest + Triceps", "Back + Biceps", or
     "Legs". Do not append words such as workout, strength, or hypertrophy to every session name.
   - Treat an active workout as training already in progress; do not schedule a second session over it.
+  - Treat scheduled sports as fixed physical-training commitments. Account for their timing and
+    duration when placing gym sessions and recovery days; never remove or replace them.
   - Body-weight exercises always use weight 0.
   - Tamagym supports an optional drop set on the LAST set of an exercise. Set
     last_set_technique to "none" normally. You may use "dropset" on at most one exercise per
@@ -101,7 +103,8 @@ defmodule Tamagym.Gym.AIPlanner do
   Include every requested muscle group, with at least two exercises for each group when more than
   one group is selected. Use 1-2 suitable compound movements followed by non-redundant accessories.
   Progress conservatively from completed workout history; use weight 0 when there is no useful load
-  history. Tamagym can apply a drop set to the LAST set of an exercise. Use
+  history. Account for scheduled_sports on the selected weekday so the routine is compatible with
+  that fixed training commitment. Tamagym can apply a drop set to the LAST set of an exercise. Use
   last_set_technique="none" normally. Optionally choose "dropset" for at most one stable isolation,
   cable, dumbbell, or machine exercise when it clearly improves hypertrophy. Never use it on a heavy
   compound lift or when weight is 0. drop_count is the number of reductions and drop_percentage is
@@ -284,8 +287,9 @@ defmodule Tamagym.Gym.AIPlanner do
     training days when recovery permits. Every generated workout must meet the exercise-count rules
     in the system prompt and state both muscle groups in its name when it is a paired session. The
     approved plan will also become the user's recurring weekly schedule, so make each weekday a
-    sustainable weekly template rather than a one-off session. For every exercise, always fill the
-    technique fields; use the safe defaults last_set_technique="none", drop_count=1,
+    sustainable weekly template rather than a one-off session. Treat scheduled_sports as fixed
+    commitments and plan gym workload and recovery around their start times and durations. For every
+    exercise, always fill the technique fields; use the safe defaults last_set_technique="none", drop_count=1,
     and drop_percentage=20 when no technique is prescribed. The user will review the draft before
     it is saved. Write names, rationales, and notes in #{language_name(State.locale(state))}.
 
@@ -350,6 +354,7 @@ defmodule Tamagym.Gym.AIPlanner do
           "recent_workouts" => recent_workouts(state, Date.utc_today()),
           "active_workout" => active_workout(state),
           "current_weekday_routine" => current_weekday_routine(state, day),
+          "scheduled_sports" => Enum.map(State.sports_for_day(state, day), &sport_context/1),
           "candidate_exercises" =>
             Enum.map(candidates, fn exercise ->
               exercise
@@ -407,12 +412,18 @@ defmodule Tamagym.Gym.AIPlanner do
     with %{"entries" => entries} <- state["active"],
          %{"id" => exercise_id} = entry <- Enum.at(entries, entry_index),
          %{} = original <- exercise(state, exercise_id),
-         candidates when candidates != [] <- alternative_candidates(state, original) do
+         candidates when candidates != [] <- alternative_candidates(state, original, entries) do
+      current_exercises =
+        entries
+        |> Enum.map(&exercise(state, &1["id"]))
+        |> Enum.reject(&is_nil/1)
+
       context = %{
         "task" => "exercise_alternatives",
         "reason_unavailable" => reason,
         "unit" => state["unit"],
         "original_exercise" => compact_exercise(original),
+        "current_exercises" => Enum.map(current_exercises, &compact_exercise/1),
         "current_target" => Map.get(entry, "target", %{}),
         "recent_performance" => recent_exercise_performance(state, exercise_id),
         "candidate_exercises" => Enum.map(candidates, &compact_exercise/1)
@@ -421,10 +432,12 @@ defmodule Tamagym.Gym.AIPlanner do
       prompt = """
       TASK: Rank up to five safe, practical alternatives for the original exercise.
 
-      Preserve the original training intent when possible. Account for reason_unavailable. For
-      equipment or occupancy, prefer a similar movement with different equipment. For pain, avoid
-      close variants that may reproduce the same discomfort and do not provide medical advice.
-      Write each reason in #{language_name(State.locale(state))}.
+      Preserve the original training intent while considering current_exercises as one complete
+      workout. Never recommend an exercise already in current_exercises, and avoid redundant close
+      variants of them. Account for reason_unavailable. For equipment or occupancy, prefer a similar
+      movement with different equipment. For pain, avoid close variants that may reproduce the same
+      discomfort and do not provide medical advice. Write each reason in
+      #{language_name(State.locale(state))}.
 
       INPUT_JSON:
       #{Jason.encode!(context)}
@@ -545,8 +558,29 @@ defmodule Tamagym.Gym.AIPlanner do
       "recent_workouts" => recent_workouts(state, List.first(expected_dates)),
       "active_workout" => active_workout(state),
       "current_plan" => current_plan(state, expected_dates),
+      "scheduled_sports" => scheduled_sports(state, expected_dates),
       "exercise_catalogue" =>
         Enum.map(Catalogue.all() ++ List.wrap(state["customEx"]), &compact_exercise/1)
+    }
+  end
+
+  defp scheduled_sports(state, dates) do
+    Enum.flat_map(dates, fn date ->
+      weekday = Integer.to_string(rem(Date.day_of_week(date), 7))
+
+      Enum.map(State.sports_for_day(state, weekday), fn sport ->
+        sport
+        |> sport_context()
+        |> Map.put("date", Date.to_iso8601(date))
+      end)
+    end)
+  end
+
+  defp sport_context(sport) do
+    %{
+      "sport" => sport["name"],
+      "start_time" => sport["start"],
+      "duration_minutes" => sport["duration"]
     }
   end
 
@@ -836,13 +870,14 @@ defmodule Tamagym.Gym.AIPlanner do
     |> Enum.take(180)
   end
 
-  defp alternative_candidates(state, original) do
+  defp alternative_candidates(state, original, entries) do
     custom = List.wrap(state["customEx"])
     target = original["tg"]
     body_part = original["bp"]
+    current_ids = MapSet.new(entries, & &1["id"])
 
     (Catalogue.all() ++ custom)
-    |> Enum.reject(&(&1["id"] == original["id"]))
+    |> Enum.reject(&MapSet.member?(current_ids, &1["id"]))
     |> Enum.filter(fn candidate ->
       (target && candidate["tg"] == target) ||
         (body_part && candidate["bp"] == body_part)

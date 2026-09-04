@@ -9,7 +9,7 @@ A Phoenix LiveView gym and body-weight tracker with SQLite persistence, email/pa
 - Email/password accounts with bcrypt password hashes
 - Encrypted, HTTP-only session cookies and CSRF protection
 - Local-only use without creating an account
-- Routines and weekly plans
+- Routines, weekly plans, and recurring sports with start times and durations
 - Active workouts with editable weight, reps, and sets
 - Workout history, training totals, and body-weight tracking
 - Built-in exercise catalogue with images and animations

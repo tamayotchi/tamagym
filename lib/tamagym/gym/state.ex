@@ -14,6 +14,7 @@ defmodule Tamagym.Gym.State do
     "bodyweight" => [],
     "routines" => [],
     "week" => %{},
+    "sports" => [],
     "dayPlan" => %{},
     "workouts" => [],
     "active" => nil,
@@ -29,6 +30,7 @@ defmodule Tamagym.Gym.State do
   def clean(value) when is_map(value) do
     @defaults
     |> Map.merge(Map.delete(value, "restPauseSec"))
+    |> normalize_sports()
     |> strip_rest_pause_data()
   end
 
@@ -164,6 +166,45 @@ defmodule Tamagym.Gym.State do
   def assign_day(state, day, ""), do: update_in(state["week"], &Map.delete(&1, day))
   def assign_day(state, day, nil), do: assign_day(state, day, "")
   def assign_day(state, day, routine_id), do: put_in(state, ["week", day], routine_id)
+
+  def add_sport(state, attrs) when is_map(attrs) do
+    sport = %{
+      "id" => uid("sport"),
+      "name" => attrs["name"] |> normalized_text() |> String.slice(0, 80),
+      "day" => normalized_text(attrs["day"]),
+      "start" => normalized_text(attrs["start"]),
+      "duration" => normalized_duration(attrs["duration"])
+    }
+
+    if valid_sport?(sport) do
+      Map.update(state, "sports", [sport], &(List.wrap(&1) ++ [sport]))
+    else
+      state
+    end
+  end
+
+  def add_sport(state, _attrs), do: state
+
+  def remove_sport(state, id) do
+    Map.update(state, "sports", [], fn sports ->
+      Enum.reject(List.wrap(sports), fn
+        %{} = sport -> sport["id"] == id
+        _sport -> false
+      end)
+    end)
+  end
+
+  def sports_for_day(state, day) do
+    day = to_string(day)
+
+    state["sports"]
+    |> List.wrap()
+    |> Enum.filter(fn
+      %{} = sport -> sport["day"] == day
+      _sport -> false
+    end)
+    |> Enum.sort_by(&{&1["start"], &1["name"]})
+  end
 
   def assign_date(state, date, ""), do: update_in(state["dayPlan"], &Map.delete(&1, date))
   def assign_date(state, date, nil), do: assign_date(state, date, "")
@@ -377,15 +418,15 @@ defmodule Tamagym.Gym.State do
   def update_set(state, entry_index, set_index, attrs) do
     update_active_entry(state, entry_index, fn entry ->
       sets = entry["sets"]
-      first_work_index = Enum.find_index(sets, &(not warmup_set?(&1)))
+      selected_set = if set_index >= 0, do: Enum.at(sets, set_index)
 
       updated_sets =
         sets
         |> Enum.with_index()
         |> Enum.map(fn {set, index} ->
           copy_to_following_set? =
-            set_index == first_work_index && index > set_index && not warmup_set?(set) &&
-              not set["done"]
+            selected_set && not warmup_set?(selected_set) && index > set_index &&
+              not warmup_set?(set) && not set["done"]
 
           if index == set_index || copy_to_following_set?, do: Map.merge(set, attrs), else: set
         end)
@@ -679,6 +720,43 @@ defmodule Tamagym.Gym.State do
   end
 
   defp apply_planned_set_technique(set, _technique), do: set
+
+  defp normalize_sports(state) do
+    sports =
+      state["sports"]
+      |> List.wrap()
+      |> Enum.flat_map(fn
+        %{} = sport ->
+          normalized = %{
+            "id" => sport["id"] |> normalized_text() |> String.slice(0, 120),
+            "name" => sport["name"] |> normalized_text() |> String.slice(0, 80),
+            "day" => normalized_text(sport["day"]),
+            "start" => normalized_text(sport["start"]),
+            "duration" => normalized_duration(sport["duration"])
+          }
+
+          if valid_sport?(normalized), do: [normalized], else: []
+
+        _sport ->
+          []
+      end)
+
+    Map.put(state, "sports", sports)
+  end
+
+  defp valid_sport?(sport) do
+    sport["id"] != "" && sport["name"] != "" && sport["day"] in ~w(0 1 2 3 4 5 6) &&
+      Regex.match?(~r/^(?:[01]\d|2[0-3]):[0-5]\d$/, sport["start"]) &&
+      sport["duration"] in 1..1440
+  end
+
+  defp normalized_duration(value) when is_integer(value), do: value
+  defp normalized_duration(value) when is_binary(value), do: integer(value)
+  defp normalized_duration(_value), do: 0
+
+  defp normalized_text(value) when is_binary(value), do: String.trim(value)
+  defp normalized_text(value) when is_integer(value), do: Integer.to_string(value)
+  defp normalized_text(_value), do: ""
 
   defp strip_rest_pause_data(state) do
     state
